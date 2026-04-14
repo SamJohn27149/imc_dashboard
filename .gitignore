@@ -1,0 +1,11 @@
+# Python env/cache
+.venv/
+__pycache__/
+*.pyc
+# Jupyter
+.ipynb_checkpoints/
+# Cursor local files
+.cursor/
+# Logs / data artifacts (按需保留)
+logfiles/
+*.log

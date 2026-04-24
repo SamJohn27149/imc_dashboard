@@ -11,7 +11,8 @@ import threading
 import re
 
 def parse_lambda(logs_df): 
-    lambda_log_rows = []
+    # 解析lambdalog里的挂单信息
+    quote_row = []
     # 每个 timestamp 仅一行：对表按时间排序后单次 iterrows，避免每个 ts 再过滤子表
     for _, row in logs_df.sort_values("timestamp").iterrows():
         timestamp = row["timestamp"]
@@ -20,22 +21,9 @@ def parse_lambda(logs_df):
             d = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             continue
+        if not isinstance(d, dict):
+            continue
         for product,value in d.items():
-            # bid_map = value.get("bid") or {}
-            # bid_quote_price, bid_quote_volume = next(iter(bid_map.items()))
-            # ask_map = value.get("ask") or {}
-            # ask_quote_price, ask_quote_volume = next(iter(ask_map.items()))
-            # # print(f"product: {product}, bid_quote_price: {bid_quote_price}, bid_quote_volume: {bid_quote_volume}, ask_quote_price: {ask_quote_price}, ask_quote_volume: {ask_quote_volume}")
-            # lambda_log_rows.append(
-            #     {
-            #         'timestamp': timestamp,
-            #         'product':   product,
-            #         'bid_quote_price': bid_quote_price,
-            #         'bid_quote_volume':bid_quote_volume,
-            #         'ask_quote_price': ask_quote_price,
-            #         'ask_quote_volume':ask_quote_volume,
-            #     }
-            # )
             if not isinstance(value, dict):
                 continue
             bid_map = value.get("bid") or {}
@@ -52,7 +40,7 @@ def parse_lambda(logs_df):
                 ask_quote_price, ask_quote_volume = next(iter(ask_map.items()))
             else:
                 ask_quote_price, ask_quote_volume = None, None
-            lambda_log_rows.append(
+            quote_row.append(
                 {
                     "timestamp": timestamp,
                     "product": product,
@@ -62,8 +50,30 @@ def parse_lambda(logs_df):
                     "ask_quote_volume": ask_quote_volume,
                 }
             )
-    lambda_df = pd.DataFrame(lambda_log_rows)
-    return lambda_df
+    quote_df = pd.DataFrame(quote_row)
+
+    # 解析lambdalog里的指标信息
+    indicator_row = []
+    for _, row in logs_df.sort_values("timestamp").iterrows():
+        timestamp = row["timestamp"]
+        raw = row["lambdaLog"]
+        try:
+            d = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        for name, value in d.items():
+            indicator_row.append(
+                {
+                    "timestamp": timestamp,
+                    "indicator": name,
+                    "value": value,
+                }
+            )
+    indicator_df = pd.DataFrame(indicator_row)
+
+    return quote_df,indicator_df
 
 def parse_log_file(log_file,product=""):
     ''''

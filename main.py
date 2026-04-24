@@ -10,7 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 import os
-from graph import price_graph, pnl_graph
+from graph import price_graph, pnl_graph, orderbook_table
 from parser import parse_log_file, parse_product_list
 TIMESTAMP_MAX = 199900
 TIMESTAMP_MIN = 0
@@ -291,6 +291,19 @@ def update_pnl(timestamp, fig, load_button, tradeHistory, activities):
             fig["layout"]["shapes"][0]["x0"] = timestamp
             fig["layout"]["shapes"][0]["x1"] = timestamp
     return fig
+
+
+@app.callback(
+    Output("orderbook-table", "children"),
+    Input("timestamp-clicked", "value"),
+    Input("product-dropdown", "value"),
+    Input("activities","data"),
+)
+def update_orderbook(timestamp, product, activities_json):
+    if activities_json:
+        activities = pd.DataFrame(json.loads(activities_json))
+        return orderbook_table(activities, product, timestamp)
+    return []
 
 
 

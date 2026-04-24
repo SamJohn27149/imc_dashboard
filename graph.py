@@ -66,7 +66,7 @@ def price_graph(activities_json, logs_json, tradeHistory_json, product, timestam
 
     # 绘制我们的挂单信息
     logs = pd.read_json(StringIO(logs_json))
-    lambdaLog_df = parse_lambda(logs)
+    lambdaLog_df, _ = parse_lambda(logs)
 
     _lambda_ok = not lambdaLog_df.empty and "product" in lambdaLog_df.columns # 要判断当前lambdalog不为空且包含所选品种，否则索引报错
     lamdaLog_product = (lambdaLog_df[lambdaLog_df['product']==product] if _lambda_ok else pd.DataFrame())
@@ -120,25 +120,6 @@ def price_graph(activities_json, logs_json, tradeHistory_json, product, timestam
             
         mt_agg["qty_text"] = mt_agg["qty_list"].apply(_fmt_qty_expr)
 
-
-        # fig.add_trace(
-        #     go.Scatter(
-        #         x=market_trades["timestamp"],
-        #         y=market_trades["price"],
-        #         mode="markers",
-        #         name="market_trades",
-        #         marker=dict(
-        #             color="#2563eb",
-        #             size=8,
-        #             symbol="star",
-        #             line=dict(width=0),
-        #             opacity=0.7,
-        #         ),
-        #         hovertemplate="Timestamp: %{x}<br>Price: %{y}<br>Qty: %{text}<extra></extra>",
-        #         text=market_trades["quantity"],
-        #         visible="legendonly",
-        #     )
-        # )
         fig.add_trace(
             go.Scatter(
                 x=mt_agg["timestamp"],
@@ -166,8 +147,8 @@ def price_graph(activities_json, logs_json, tradeHistory_json, product, timestam
                 mode="markers",
                 name="own_trades",
                 marker=dict(
-                    color="#fff176",
-                    size=8,
+                    color="#8a7224",
+                    size=12,
                     symbol="cross",
                     line=dict(width=1, color="#ffeb3b"),
                     
@@ -178,31 +159,7 @@ def price_graph(activities_json, logs_json, tradeHistory_json, product, timestam
             )
         )
     
-    # 计算挂单成交概率
-    # lam = lamdaLog_product.copy()
-    # lam["bid_quote_price"] = pd.to_numeric(lam["bid_quote_price"], errors="coerce") # 把字符串"10007"转化为数字10007方便后续比较
-    # lam["ask_quote_price"] = pd.to_numeric(lam["ask_quote_price"], errors="coerce") 
 
-    # own = own_trades.copy()
-    # own["price"] = pd.to_numeric(own["price"], errors="coerce")
-
-    # # 每个 timestamp 对应的 own trade 成交价集合
-    # prices_by_ts = own.groupby("timestamp")["price"].apply(lambda s: set(s.dropna()))
-
-    # # 逐行判断：own trade price 是否等于 quote price
-    # lam["bid_filled"] = lam.apply(
-    #     lambda r: r["bid_quote_price"] in prices_by_ts.get(r["timestamp"], set()),
-    #     axis=1,
-    # )
-    # lam["ask_filled"] = lam.apply(
-    #     lambda r: r["ask_quote_price"] in prices_by_ts.get(r["timestamp"], set()),
-    #     axis=1,
-    # )
-
-    # n_black = lam["bid_quote_price"].notna().sum() + lam["ask_quote_price"].notna().sum()
-    # n_matched = lam["bid_filled"].sum() + lam["ask_filled"].sum()
-    # # 计算成交概率
-    # p = n_matched / n_black if n_black else 0.0   
     # 计算挂单成交概率（bid/ask 列可能缺一或全无）
     n_black = 0
     n_matched = 0
@@ -259,7 +216,48 @@ def price_graph(activities_json, logs_json, tradeHistory_json, product, timestam
         )
 
     # 绘制指标信息
-
+    _, indicator_df = parse_lambda(logs)
+    if (
+        not indicator_df.empty
+        and "indicator" in indicator_df.columns
+        and "value" in indicator_df.columns
+    ):
+        ind = indicator_df.copy()
+        ind["value"] = pd.to_numeric(ind["value"], errors="coerce")
+        ind = ind[ind["value"].notna()]
+        names = sorted(ind["indicator"].dropna().astype(str).unique())
+        # 颜色循环（可按需换成 Set1 / Dark24 等）
+        palette = (
+            px.colors.qualitative.Plotly
+            + px.colors.qualitative.Dark24
+            + px.colors.qualitative.Set2
+        )
+        for i, name in enumerate(names):
+            sub = ind[ind["indicator"] == name].sort_values("timestamp")
+            if sub.empty:
+                continue
+            c = palette[i % len(palette)]
+            fig.add_trace(
+                go.Scatter(
+                    x=sub["timestamp"],
+                    y=sub["value"],
+                    mode="lines",
+                    name=name,
+                    yaxis="y2",
+                    line=dict(width=2, color=c),
+                    hovertemplate="timestamp=%{x}<br>%{fullData.name}=%{y}<extra></extra>",
+                    visible="legendonly",
+                )
+            )
+        if names:
+            fig.update_layout(
+                yaxis2=dict(
+                    title="Indicators",
+                    overlaying="y",
+                    side="right",
+                    showgrid=False,
+                )
+            )
 
 
     
@@ -355,6 +353,108 @@ def pnl_graph(activities_json, tradeHistory_json,timestamp):
     )
 
     return fig
-            
 
-   
+
+def orderbook_table(activities, product, timestamp):
+    df_product = activities[activities["product"] == product]
+    df_product = df_product.copy()
+    df_product.index = df_product["timestamp"]
+    df_concat = get_df_orderbook(df_product, timestamp)
+    dt = dash_table.DataTable(
+        id="orderbook",
+        data=df_concat.to_dict("records"),
+        columns=[
+            {"id": "bid", "name": "Bid volume"},
+            {"id": "price_text", "name": "Price"},
+            {"id": "ask", "name": "Ask volume"},
+        ],
+        fixed_rows={"headers": True},
+        style_table={"height": "60vh"},
+        style_data_conditional=[
+            {
+                "if": {"filter_query": '{row_type} = "gap"', "column_id": "price_text"},
+                "backgroundColor": "rgb(245, 245, 245)",
+            },
+            {
+                "if": {"filter_query": "{bid} > 0", "column_id": "bid"},
+                "backgroundColor": "rgb(220, 252, 231)",
+                "fontWeight": "bold",
+            },
+            {
+                "if": {"filter_query": "{ask} > 0", "column_id": "ask"},
+                "backgroundColor": "rgb(254, 226, 226)",
+                "fontWeight": "bold",
+            },
+        ],
+        style_cell={
+            "minWidth": 50,
+            "maxWidth": 50,
+            "width": 50,
+            "border": "1px solid black",
+        },
+        style_cell_conditional=[
+            {"if": {"column_id": c}, "textAlign": "center"}
+            for c in ["bid", "price_text", "ask"]
+        ],
+    )
+    return dt
+
+
+def get_df_orderbook(df, timestamp):
+    df_ob = df.copy()
+    df_ob.index = df_ob["timestamp"]
+    data = df_ob.loc[timestamp]
+
+    by_price = {}
+    pairs = [
+        (data["bid_price_1"], data["bid_volume_1"], "b"),
+        (data["bid_price_2"], data["bid_volume_2"], "b"),
+        (data["bid_price_3"], data["bid_volume_3"], "b"),
+        (data["ask_price_1"], data["ask_volume_1"], "a"),
+        (data["ask_price_2"], data["ask_volume_2"], "a"),
+        (data["ask_price_3"], data["ask_volume_3"], "a"),
+    ]
+    for px, vx, side in pairs:
+        if pd.isna(px) or pd.isna(vx):
+            continue
+        v = int(vx)
+        if v <= 0:
+            continue
+        p = int(round(float(px)))
+        if p not in by_price:
+            by_price[p] = {"bid": 0, "ask": 0}
+        if side == "b":
+            by_price[p]["bid"] = v
+        else:
+            by_price[p]["ask"] = v
+
+    prices_desc = sorted(by_price.keys(), reverse=True)
+    rows = []
+    for k, p in enumerate(prices_desc):
+        b = by_price[p]["bid"]
+        a = by_price[p]["ask"]
+        rows.append(
+            {
+                "bid": b,
+                "price_num": float(p),
+                "price_text": str(p),
+                "ask": a,
+                "row_type": "level",
+            }
+        )
+        if k >= len(prices_desc) - 1:
+            continue
+        nxt = prices_desc[k + 1]
+        diff = int(p - nxt)
+        if diff <= 1:
+            continue
+        rows.append(
+            {
+                "bid": 0,
+                "price_num": np.nan,
+                "price_text": f"↑ {diff} ↓",
+                "ask": 0,
+                "row_type": "gap",
+            }
+        )
+    return pd.DataFrame(rows).reset_index(drop=True)
